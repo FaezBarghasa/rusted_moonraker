@@ -1,22 +1,12 @@
-# Welcome to Moonraker Documentation
+# Welcome to Rusted Moonraker (RMR) Documentation
 
-Moonraker is a Python 3 based web server that exposes APIs with which
-client applications may use to interact with the 3D printing firmware
-[Klipper](https://github.com/Klipper3d/klipper). Communication between
-the Klippy host and Moonraker is done over a Unix Domain Socket.  Tornado
-is used to provide Moonraker's server functionality.
+Rusted Moonraker (RMR) is a high-performance Rust-based API web server and touchscreen control interface that exposes APIs for interacting with the [Klipper](https://github.com/Klipper3d/klipper) 3D printing firmware. 
 
-Users should refer to the [Installation](installation.md) and
-[Configuration](configuration.md) sections for documentation on how
-to install and configure Moonraker.
+RMR replaces the legacy Python Tornado backend with a statically typed, concurrent system built around Actix-web, SurrealDB, and Slint.
 
-Front end and other client developers may refer to the
-[External API](./external_api/introduction.md)
-documentation.
+## Documentation Sections
 
-Backend developers should refer to the
-[contributing](contributing.md) section for basic contribution
-guidelines prior to creating a pull request.  The
-[components](components.md) document provides a brief overview
-of how to create a component and interact with Moonraker's
-primary internal APIs.
+- **[Architecture Details](architecture.md)**: Explore RMR's actor-based UDS communication topology, thread synchronization, and zero-copy G-code metadata scanner.
+- **[Configuration Guide](configuration.md)**: Details on settings for `[server]`, `[klippy]`, and `[database]` config blocks.
+- **[Installation Guide](installation.md)**: Step-by-step setup guides for compiling and running the daemon on Linux systems and embedded hardware.
+- **[API Reference](external_api/introduction.md)**: Comprehensive guide on the HTTP/WebSocket endpoints and authorization filters.

@@ -6,6 +6,7 @@ nav:
     - Installation: installation.md
     - Configuration : configuration.md
     - Developer Documentation:
+        - Architecture: architecture.md
         - External API:
           - Introduction: external_api/introduction.md
           - Server Administration: external_api/server.md

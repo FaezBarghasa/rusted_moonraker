@@ -1,43 +1,64 @@
+# Rusted Moonraker (RMR)
 
-#  Moonraker - API Web Server for Klipper
+Rusted Moonraker (RMR) is a high-performance, single-process API web server and touchscreen control panel for the [Klipper](https://github.com/Klipper3d/klipper) 3D printer firmware, ported from the Python Tornado-based Moonraker implementation to a unified Rust codebase. 
 
-Moonraker is a Python 3 based web server that exposes APIs with which
-client applications may use to interact with the 3D printing firmware
-[Klipper](https://github.com/KevinOConnor/klipper). Communication between
-the Klippy host and Moonraker is done over a Unix Domain Socket.  Tornado
-is used to provide Moonraker's server functionality.
+RMR incorporates Actix-web HTTP/WebSocket services, an asynchronous Unix Domain Socket (UDS) client actor communicating with Klippy, transactional database storage using SurrealDB, an optimized memory-mapped zero-copy G-code analyzer, and an integrated [Slint](https://slint.dev/) touchscreen GUI.
 
-Documentation for users and developers can be found on
-[Read the Docs](https://moonraker.readthedocs.io/en/latest/).
+---
 
-### Clients
+## Architectural Layout
 
-Note that Moonraker does not come bundled with a client, you will need to
-install one.  The following clients are currently available:
+The system is structured as a multi-crate Rust workspace:
 
-- [Mainsail](https://github.com/mainsail-crew/mainsail) by [Mainsail-Crew](https://github.com/mainsail-crew)
-- [Fluidd](https://github.com/fluidd-core/fluidd) by Cadriel
-- [KlipperScreen](https://github.com/jordanruthe/KlipperScreen) by jordanruthe
-- [mooncord](https://github.com/eliteSchwein/mooncord) by eliteSchwein
+- **[`rmr-core`](file:///home/jrad/RustroverProjects/rusted_moonraker/rmr-core)**: Core library housing configuration loaders, JSON-RPC communication drivers, database transactions, G-code analysis pipelines, Actix web servers, WebSocket routers, and authorization middleware.
+- **[`rmr-gui`](file:///home/jrad/RustroverProjects/rusted_moonraker/rmr-gui)**: Embedded graphical touchscreen interface compiled with Slint. Includes high-frequency status readouts, temperature presets, macros, and emergency controls.
+- **[`rmr-app`](file:///home/jrad/RustroverProjects/rusted_moonraker/rmr-app)**: Daemon launcher executable that starts background actors, SurrealDB storage engines, HTTP/WS endpoints, and loops the Slint GUI on the main thread.
 
-### Raspberry Pi Images
+---
 
-Moonraker is available pre-installed with the following Raspberry Pi images:
+## Installation & Building
 
-- [MainsailOS](https://github.com/mainsail-crew/MainsailOS) by [Mainsail-Crew](https://github.com/mainsail-crew)
-  - Includes Klipper, Moonraker, and Mainsail
-- [FluiddPi](https://github.com/fluidd-core/FluiddPi) by Cadriel
-  - Includes Klipper, Moonraker, and Fluidd
+### Prerequisites
 
-### Docker Containers
+You need a working Rust toolchain. Slint requires graphic backend libraries (like X11, Wayland, or KMS/DRM on Linux).
 
-The following projects deploy Moonraker via Docker:
+```bash
+# Verify cargo is installed
+cargo --version
+```
 
-- [prind](https://github.com/mkuf/prind) by mkuf
-  - A suite of containers which allow you to run Klipper in
-    Docker.  Includes support for OctoPrint and Moonraker.
+### Build the Workspace
 
-### Changes
+To compile Rusted Moonraker in debug mode:
 
-Please refer to the [changelog](https://moonraker.readthedocs.io/en/latest/changelog)
-for a list of notable changes to Moonraker.
+```bash
+cargo build
+```
+
+To compile a high-performance release binary:
+
+```bash
+cargo build --release
+```
+
+The resulting binary will be located at `target/release/rmr-app`.
+
+---
+
+## Running the Daemon
+
+Launch the orchestrator by passing the path to the configuration file (or it will default to `~/.config/rmr/moonraker.conf`):
+
+```bash
+cargo run -p rmr-app -- [path/to/moonraker.conf]
+```
+
+---
+
+## Running Tests
+
+To execute the unit and integration test suites:
+
+```bash
+cargo test --workspace
+```
