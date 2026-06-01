@@ -1,0 +1,292 @@
+import { Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "Rusted Moonraker Control";
+    width: 800px;
+    height: 480px;
+    background: #111216;
+
+    in property <string> print_status: "Idle";
+    in property <float> tool_temp: 20.0;
+    in property <float> target_temp: 0.0;
+    in property <float> print_progress: 0.0;
+    in property <string> pos_x: "0.0";
+    in property <string> pos_y: "0.0";
+    in property <string> pos_z: "0.0";
+
+    callback emergency_stop();
+    callback set_target_temperature(float);
+    callback send_gcode(string);
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalBox {
+            max-height: 40px;
+            padding: 0px;
+            
+            Text {
+                text: "Rusted Moonraker";
+                font-size: 20px;
+                font-weight: 800;
+                color: #ff9800;
+                vertical-alignment: center;
+            }
+
+            Rectangle {}
+
+            Rectangle {
+                background: print_status == "Printing" ? #4caf50 : (print_status == "Error" ? #f44336 : #373b47);
+                border-radius: 4px;
+                padding-left: 10px;
+                padding-right: 10px;
+                height: 30px;
+                
+                Text {
+                    text: print_status;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #ffffff;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        HorizontalBox {
+            spacing: 16px;
+            padding: 0px;
+
+            VerticalBox {
+                padding: 0px;
+                spacing: 12px;
+                
+                Rectangle {
+                    background: #18191f;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #2b2d3a;
+                    
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 8px;
+                        Text {
+                            text: "Extruder Temperature";
+                            font-size: 14px;
+                            color: #8a8e9e;
+                        }
+                        HorizontalBox {
+                            padding: 0px;
+                            Text {
+                                text: tool_temp + "°C";
+                                font-size: 32px;
+                                font-weight: 700;
+                                color: #ffffff;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: " / " + target_temp + "°C";
+                                font-size: 20px;
+                                color: #a0a5b5;
+                                vertical-alignment: bottom;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: #18191f;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #2b2d3a;
+                    
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 6px;
+                        Text {
+                            text: "Position";
+                            font-size: 14px;
+                            color: #8a8e9e;
+                        }
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 12px;
+                            Text {
+                                text: "X: " + pos_x;
+                                font-size: 16px;
+                                font-weight: 600;
+                                color: #ffffff;
+                            }
+                            Text {
+                                text: "Y: " + pos_y;
+                                font-size: 16px;
+                                font-weight: 600;
+                                color: #ffffff;
+                            }
+                            Text {
+                                text: "Z: " + pos_z;
+                                font-size: 16px;
+                                font-weight: 600;
+                                color: #ffffff;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: #18191f;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #2b2d3a;
+                    
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 8px;
+                        Text {
+                            text: "Print Progress";
+                            font-size: 14px;
+                            color: #8a8e9e;
+                        }
+                        
+                        Rectangle {
+                            background: #2b2d3a;
+                            height: 16px;
+                            border-radius: 8px;
+                            clip: true;
+                            
+                            Rectangle {
+                                background: #ff9800;
+                                x: 0px;
+                                y: 0px;
+                                height: parent.height;
+                                width: parent.width * print_progress;
+                            }
+                        }
+
+                        Text {
+                            text: (print_progress * 100) + "% Complete";
+                            font-size: 12px;
+                            color: #ff9800;
+                            horizontal-alignment: right;
+                        }
+                    }
+                }
+            }
+
+            VerticalBox {
+                padding: 0px;
+                spacing: 12px;
+                width: 320px;
+
+                Rectangle {
+                    background: #18191f;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #2b2d3a;
+                    
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 10px;
+                        
+                        Text {
+                            text: "Temperature Preset Control";
+                            font-size: 14px;
+                            color: #8a8e9e;
+                        }
+
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 8px;
+                            height: 40px;
+                            
+                            Button {
+                                text: "PLA (200°C)";
+                                clicked => {
+                                    set_target_temperature(200.0);
+                                }
+                            }
+                            
+                            Button {
+                                text: "PETG (240°C)";
+                                clicked => {
+                                    set_target_temperature(240.0);
+                                }
+                            }
+                        }
+
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 8px;
+                            height: 40px;
+                            
+                            Button {
+                                text: "Cooldown";
+                                clicked => {
+                                    set_target_temperature(0.0);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: #18191f;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #2b2d3a;
+                    
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 8px;
+                        
+                        Text {
+                            text: "Quick Macros";
+                            font-size: 14px;
+                            color: #8a8e9e;
+                        }
+
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 8px;
+                            height: 40px;
+                            
+                            Button {
+                                text: "Home All (G28)";
+                                clicked => {
+                                    send_gcode("G28");
+                                }
+                            }
+                            
+                            Button {
+                                text: "Disable Motors (M84)";
+                                clicked => {
+                                    send_gcode("M84");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: #2b1114;
+                    border-radius: 8px;
+                    border-width: 2px;
+                    border-color: #f44336;
+                    
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 8px;
+                        
+                        Button {
+                            text: "EMERGENCY STOP";
+                            clicked => {
+                                emergency_stop();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

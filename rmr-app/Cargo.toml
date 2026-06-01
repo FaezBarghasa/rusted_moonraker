@@ -1,0 +1,12 @@
+[package]
+name = "rmr-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+rmr-core = { path = "../rmr-core" }
+rmr-gui = { path = "../rmr-gui" }
+slint = "1.16.1"
+serde_json = "1.0"
+dirs = "5.0"
