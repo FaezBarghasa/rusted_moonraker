@@ -1,6 +1,6 @@
 use memmap2::Mmap;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use regex::bytes::Regex;
 use base64::Engine;
 use rayon::prelude::*;
