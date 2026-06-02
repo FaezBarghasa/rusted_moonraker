@@ -1,20 +1,47 @@
-# CI for code style and application tests
+name: Rust CI
 
-name: test-code
-on: [push, pull_request]
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main, develop ]
+
 jobs:
-  lint-python-code:
-    runs-on: ubuntu-22.04
+  check-test:
+    name: Check & Test
+    runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: weibullguy/python-lint-plus@v1.12.0
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev pkg-config libssl-dev fontconfig libfontconfig1-dev libxkbcommon-dev libwayland-dev libx11-dev libudev-dev libinput-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-root-list: "moonraker scripts"
-          virtual-env: "python-lint-plus"
-          python-version: "3.10"
-          use-flake8: true
-          flake8-version: "==6.1.0"
-          use-mypy: true
-          mypy-version: "==1.5.1"
-          extra-flake8-options: "--ignore=E226,E301,E302,E303,W503,W504 --max-line-length=88 --max-doc-length=88"
-          extra-mypy-options: "--ignore-missing-imports --follow-imports=silent"
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo Format Check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo Check
+        run: cargo check --all-targets
+        env:
+          BINDGEN_EXTRA_CLANG_ARGS: "-m64"
+
+      - name: Cargo Test
+        run: cargo test --all-targets
+        env:
+          BINDGEN_EXTRA_CLANG_ARGS: "-m64"
+
+      - name: Cargo Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        env:
+          BINDGEN_EXTRA_CLANG_ARGS: "-m64"
