@@ -1,5 +1,13 @@
-##
+# Web API Changes
+
 This document keeps a record of notable changes to Moonraker's Web API.
+
+### June 2026 (Rusted Moonraker Release)
+- Ported the backend API server and storage engine to a high-performance compiled Rust codebase.
+- Refactored WebSocket session management using Actix Actors (`actix-web-actors`), implementing `Actor` and `StreamHandler` for websocket session management.
+- Migrated local storage to an embedded **SurrealDB v3** database engine with local **RocksDB** backing.
+- Implemented structured schemas for `PrintRecord` and `WebLayoutPreset` using SurrealQL async CRUD queries.
+- Upgraded G-code metadata analysis to execute memory-mapped, parallel backward scanning using **Rayon** for lightning-fast parsing.
 
 ### July 18th 2023
 - Moonraker API Version 1.3.0

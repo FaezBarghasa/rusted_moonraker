@@ -1,97 +1,134 @@
 use memmap2::Mmap;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use regex::bytes::Regex;
 use base64::Engine;
+use rayon::prelude::*;
 
 use crate::db::GCodeMetadata;
+
+fn find_pattern(
+    chunks: &[(usize, &[u8])],
+    pattern: &str,
+) -> Option<String> {
+    let re = Regex::new(pattern).ok()?;
+    chunks.par_iter().find_map_first(|&(_offset, slice)| {
+        re.captures(slice).map(|caps| {
+            let m = caps.get(1)
+                .or_else(|| caps.get(2))
+                .unwrap();
+            String::from_utf8_lossy(m.as_bytes()).trim().to_string()
+        })
+    })
+}
 
 pub fn analyze_gcode(path: &Path) -> Result<GCodeMetadata, std::io::Error> {
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file)? };
-    
-    let len = mmap.len();
-    let head_len = std::cmp::min(len, 65536);
-    let tail_len = std::cmp::min(len - head_len, 65536);
-    
-    let head = &mmap[..head_len];
-    let tail = if tail_len > 0 {
-        &mmap[len - tail_len..]
-    } else {
-        &[]
-    };
+    let file_len = mmap.len();
 
-    let mut scan_bytes = Vec::with_capacity(head_len + tail_len);
-    scan_bytes.extend_from_slice(head);
-    scan_bytes.extend_from_slice(tail);
+    // Define chunk size and overlap to handle patterns crossing boundary lines
+    let chunk_size = 64 * 1024; // 64KB
+    let overlap = 2048; // 2KB
 
-    let mut estimated_time = None;
-    let mut layer_height = None;
-    let mut slicer_type = None;
-    let mut thumbnail_path = None;
-
-    // 1. Generator check
-    let re_generator = Regex::new(r"(?i);\s*(?:generator|GENERATOR)\s*=\s*([^\r\n]+)|;\s*GENERATOR:\s*([^\r\n]+)").unwrap();
-    if let Some(caps) = re_generator.captures(&scan_bytes) {
-        let gen = caps.get(1).or_else(|| caps.get(2))
-            .map(|m| String::from_utf8_lossy(m.as_bytes()).trim().to_string());
-        slicer_type = gen;
+    // Prepare chunks starting from the end of the file back to the beginning
+    let mut chunks = Vec::new();
+    let mut end = file_len;
+    while end > 0 {
+        let start = if end > chunk_size { end - chunk_size } else { 0 };
+        let slice_end = std::cmp::min(end + overlap, file_len);
+        let slice = &mmap[start..slice_end];
+        chunks.push((start, slice));
+        end = start;
     }
+
+    // 1. Generator/Slicer Type check
+    let slicer_type = find_pattern(
+        &chunks,
+        r"(?i);\s*(?:generator|GENERATOR)\s*=\s*([^\r\n]+)|;\s*GENERATOR:\s*([^\r\n]+)"
+    );
 
     // 2. Layer height check
-    let re_layer = Regex::new(r"(?i);\s*(?:layer_height|Layer height)\s*[:=]\s*([0-9.]+)").unwrap();
-    if let Some(caps) = re_layer.captures(&scan_bytes) {
-        if let Some(m) = caps.get(1) {
-            if let Ok(h) = String::from_utf8_lossy(m.as_bytes()).parse::<f64>() {
-                layer_height = Some(h);
-            }
-        }
-    }
+    let layer_height = find_pattern(
+        &chunks,
+        r"(?i);\s*(?:layer_height|Layer height)\s*[:=]\s*([0-9.]+)"
+    ).and_then(|val| val.parse::<f64>().ok());
 
     // 3. Estimated print time check
-    let re_time_secs = Regex::new(r"(?i);\s*(?:TIME|estimated_time)\s*[:=]\s*([0-9.]+)").unwrap();
-    if let Some(caps) = re_time_secs.captures(&scan_bytes) {
-        if let Some(m) = caps.get(1) {
-            if let Ok(t) = String::from_utf8_lossy(m.as_bytes()).parse::<f64>() {
-                estimated_time = Some(t);
-            }
-        }
-    }
+    let mut estimated_time = find_pattern(
+        &chunks,
+        r"(?i);\s*(?:TIME|estimated_time)\s*[:=]\s*([0-9.]+)"
+    ).and_then(|val| val.parse::<f64>().ok());
 
     if estimated_time.is_none() {
-        let re_time_hms = Regex::new(r"(?i);\s*estimated printing time\s*[^=\r\n]*=\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?").unwrap();
-        if let Some(caps) = re_time_hms.captures(&scan_bytes) {
-            let mut total_secs = 0.0;
-            let h: f64 = caps.get(1).and_then(|m| String::from_utf8_lossy(m.as_bytes()).parse().ok()).unwrap_or(0.0);
-            let m: f64 = caps.get(2).and_then(|m| String::from_utf8_lossy(m.as_bytes()).parse().ok()).unwrap_or(0.0);
-            let s: f64 = caps.get(3).and_then(|m| String::from_utf8_lossy(m.as_bytes()).parse().ok()).unwrap_or(0.0);
-            total_secs += h * 3600.0 + m * 60.0 + s;
-            if total_secs > 0.0 {
-                estimated_time = Some(total_secs);
+        let estimated_time_hms = chunks.par_iter().find_map_first(|&(_offset, slice)| {
+            let re = Regex::new(r"(?i);\s*estimated printing time\s*[^=\r\n]*=\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?").unwrap();
+            re.captures(slice).map(|caps| {
+                let h: f64 = caps.get(1).and_then(|m| String::from_utf8_lossy(m.as_bytes()).parse().ok()).unwrap_or(0.0);
+                let m: f64 = caps.get(2).and_then(|m| String::from_utf8_lossy(m.as_bytes()).parse().ok()).unwrap_or(0.0);
+                let s: f64 = caps.get(3).and_then(|m| String::from_utf8_lossy(m.as_bytes()).parse().ok()).unwrap_or(0.0);
+                h * 3600.0 + m * 60.0 + s
+            })
+        });
+
+        if let Some(secs) = estimated_time_hms {
+            if secs > 0.0 {
+                estimated_time = Some(secs);
             }
         }
     }
 
     // 4. Thumbnail check & extraction
-    let re_thumb = Regex::new(r"(?s);\s*thumbnail\s+begin\s+(\d+x\d+)\s+(\d+)\r?\n(.*?);\s*thumbnail\s+end").unwrap();
-    if let Some(caps) = re_thumb.captures(&scan_bytes) {
-        if let (Some(dim), Some(base64_raw)) = (caps.get(1), caps.get(3)) {
-            let dim_str = String::from_utf8_lossy(dim.as_bytes());
-            let raw_str = String::from_utf8_lossy(base64_raw.as_bytes());
-            let base64_clean: String = raw_str.lines()
+    let mut thumbnail_path = None;
+
+    let thumb_begin = chunks.par_iter().find_map_first(|&(offset, slice)| {
+        let re = Regex::new(r";\s*thumbnail\s+begin\s+(\d+x\d+)\s+(\d+)").unwrap();
+        re.captures(slice).map(|caps| {
+            let full_match = caps.get(0).unwrap();
+            let abs_pos = offset + full_match.start();
+            let dim = String::from_utf8_lossy(caps.get(1).unwrap().as_bytes()).into_owned();
+            let len = String::from_utf8_lossy(caps.get(2).unwrap().as_bytes()).parse::<usize>().unwrap_or(0);
+            let offset_after_match = offset + full_match.end();
+            (abs_pos, offset_after_match, dim, len)
+        })
+    });
+
+    let thumb_end = chunks.par_iter().find_map_first(|&(offset, slice)| {
+        let re = Regex::new(r";\s*thumbnail\s+end").unwrap();
+        re.captures(slice).map(|caps| {
+            let full_match = caps.get(0).unwrap();
+            let abs_pos = offset + full_match.start();
+            abs_pos
+        })
+    });
+
+    if let (Some((_begin_pos, after_begin_pos, dim_str, _)), Some(end_pos)) = (thumb_begin, thumb_end) {
+        if after_begin_pos < end_pos {
+            let base64_block = &mmap[after_begin_pos..end_pos];
+            let base64_clean: String = String::from_utf8_lossy(base64_block)
+                .lines()
                 .map(|l| l.trim_start_matches(';').trim())
                 .collect();
             
             if let Ok(png_bytes) = base64::engine::general_purpose::STANDARD.decode(base64_clean) {
-                if let Some(home) = dirs::home_dir() {
-                    let thumb_dir = home.join(".config/rmr/thumbnails");
-                    let _ = std::fs::create_dir_all(&thumb_dir);
-                    let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("thumb");
-                    let thumb_file_name = format!("{}_{}.png", file_stem, dim_str);
-                    let full_thumb_path = thumb_dir.join(&thumb_file_name);
-                    if std::fs::write(&full_thumb_path, png_bytes).is_ok() {
-                        thumbnail_path = Some(full_thumb_path.to_string_lossy().to_string());
-                    }
+                let thumb_dir = Path::new("/opt/printer_data/thumbnails");
+                let fallback_dir = dirs::home_dir()
+                    .map(|h| h.join(".config/rmr/thumbnails"))
+                    .unwrap_or_else(|| std::env::temp_dir().join("rmr/thumbnails"));
+
+                let final_dir = if std::fs::create_dir_all(&thumb_dir).is_ok() {
+                    thumb_dir
+                } else {
+                    let _ = std::fs::create_dir_all(&fallback_dir);
+                    &fallback_dir
+                };
+
+                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("thumb");
+                let thumb_file_name = format!("{}_{}.png", file_stem, dim_str);
+                let full_thumb_path = final_dir.join(&thumb_file_name);
+
+                if std::fs::write(&full_thumb_path, png_bytes).is_ok() {
+                    thumbnail_path = Some(full_thumb_path.to_string_lossy().to_string());
                 }
             }
         }

@@ -170,8 +170,8 @@ impl DatabaseManager {
         let mut response = self.inner
             .query("SELECT * FROM print_records ORDER BY timestamp DESC;")
             .await?;
-        let records: Vec<PrintRecord> = response.take(0)?;
-        Ok(records)
+        let records: Vec<surrealdb::types::SerdeWrapper<PrintRecord>> = response.take(0)?;
+        Ok(records.into_iter().map(|w| w.0).collect())
     }
 
     // WebLayoutPreset CRUD
@@ -192,8 +192,8 @@ impl DatabaseManager {
         let mut response = self.inner
             .query("SELECT * FROM web_layout_presets ORDER BY timestamp DESC;")
             .await?;
-        let presets: Vec<WebLayoutPreset> = response.take(0)?;
-        Ok(presets)
+        let presets: Vec<surrealdb::types::SerdeWrapper<WebLayoutPreset>> = response.take(0)?;
+        Ok(presets.into_iter().map(|w| w.0).collect())
     }
 
     pub async fn get_web_layout_preset(&self, name: &str) -> Result<Option<WebLayoutPreset>, DatabaseError> {
@@ -201,8 +201,8 @@ impl DatabaseManager {
             .query("SELECT * FROM web_layout_presets WHERE name = $name LIMIT 1;")
             .bind(("name", name.to_string()))
             .await?;
-        let mut presets: Vec<WebLayoutPreset> = response.take(0)?;
-        Ok(presets.pop())
+        let mut presets: Vec<surrealdb::types::SerdeWrapper<WebLayoutPreset>> = response.take(0)?;
+        Ok(presets.pop().map(|w| w.0))
     }
 
     pub async fn delete_web_layout_preset(&self, name: &str) -> Result<(), DatabaseError> {
