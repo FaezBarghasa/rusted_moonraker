@@ -9,4 +9,4 @@ rmr-core = { path = "../rmr-core" }
 rmr-gui = { path = "../rmr-gui" }
 slint = "1.16.1"
 serde_json = "1.0"
-dirs = "5.0"
+dirs = "6.0.0"

@@ -1,5 +1,5 @@
 use std::path::Path;
-use surrealdb::engine::local::{Db, SurrealKv, Mem};
+use surrealdb::engine::local::{Db, RocksDb, Mem};
 use surrealdb::Surreal;
 
 pub mod migration;
@@ -18,6 +18,21 @@ pub struct PrintStats {
     pub successful_prints: u64,
     pub failed_prints: u64,
     pub total_print_time: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PrintRecord {
+    pub file_path: String,
+    pub status: String,
+    pub print_time: f64,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebLayoutPreset {
+    pub name: String,
+    pub layout_data: String,
+    pub timestamp: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,7 +76,7 @@ impl DatabaseManager {
     pub async fn initialize(db_dir: &Path) -> Result<Self, DatabaseError> {
         check_and_clear_lockfile(db_dir)?;
         let path_str = db_dir.to_string_lossy().to_string();
-        let db = Surreal::new::<SurrealKv>(&path_str).await?;
+        let db = Surreal::new::<RocksDb>(&path_str).await?;
         db.use_ns("moonraker").use_db("printer").await?;
         migration::run_migrations(&db).await?;
         Ok(DatabaseManager { inner: db })
@@ -137,6 +152,66 @@ impl DatabaseManager {
             .await?;
         Ok(())
     }
+
+    // PrintRecord CRUD
+    pub async fn save_print_record(&self, record: &PrintRecord) -> Result<(), DatabaseError> {
+        self.inner
+            .query("INSERT INTO print_records (file_path, status, print_time, timestamp)
+                    VALUES ($file_path, $status, $print_time, $timestamp);")
+            .bind(("file_path", record.file_path.clone()))
+            .bind(("status", record.status.clone()))
+            .bind(("print_time", record.print_time))
+            .bind(("timestamp", record.timestamp))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_print_records(&self) -> Result<Vec<PrintRecord>, DatabaseError> {
+        let mut response = self.inner
+            .query("SELECT * FROM print_records ORDER BY timestamp DESC;")
+            .await?;
+        let records: Vec<PrintRecord> = response.take(0)?;
+        Ok(records)
+    }
+
+    // WebLayoutPreset CRUD
+    pub async fn save_web_layout_preset(&self, preset: &WebLayoutPreset) -> Result<(), DatabaseError> {
+        self.inner
+            .query("INSERT INTO web_layout_presets (name, layout_data, timestamp)
+                    VALUES ($name, $layout_data, $timestamp)
+                    ON DUPLICATE KEY UPDATE
+                    layout_data = $layout_data, timestamp = $timestamp;")
+            .bind(("name", preset.name.clone()))
+            .bind(("layout_data", preset.layout_data.clone()))
+            .bind(("timestamp", preset.timestamp))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_web_layout_presets(&self) -> Result<Vec<WebLayoutPreset>, DatabaseError> {
+        let mut response = self.inner
+            .query("SELECT * FROM web_layout_presets ORDER BY timestamp DESC;")
+            .await?;
+        let presets: Vec<WebLayoutPreset> = response.take(0)?;
+        Ok(presets)
+    }
+
+    pub async fn get_web_layout_preset(&self, name: &str) -> Result<Option<WebLayoutPreset>, DatabaseError> {
+        let mut response = self.inner
+            .query("SELECT * FROM web_layout_presets WHERE name = $name LIMIT 1;")
+            .bind(("name", name.to_string()))
+            .await?;
+        let mut presets: Vec<WebLayoutPreset> = response.take(0)?;
+        Ok(presets.pop())
+    }
+
+    pub async fn delete_web_layout_preset(&self, name: &str) -> Result<(), DatabaseError> {
+        self.inner
+            .query("DELETE web_layout_presets WHERE name = $name;")
+            .bind(("name", name.to_string()))
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -169,5 +244,38 @@ mod tests {
         assert_eq!(stats2.successful_prints, 1);
         assert_eq!(stats2.failed_prints, 1);
         assert_eq!(stats2.total_print_time, 1500.0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_reads_writes() {
+        // Create a temporary directory for the RocksDB instance
+        let temp_dir = std::env::temp_dir().join(format!("rmr_db_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let db = DatabaseManager::initialize(&temp_dir).await.unwrap();
+
+        let db_arc = std::sync::Arc::new(db);
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let db_clone = db_arc.clone();
+            let handle = tokio::spawn(async move {
+                let preset = WebLayoutPreset {
+                    name: format!("preset_{}", i),
+                    layout_data: format!("data_{}", i),
+                    timestamp: i,
+                };
+                db_clone.save_web_layout_preset(&preset).await.unwrap();
+                let retrieved = db_clone.get_web_layout_preset(&format!("preset_{}", i)).await.unwrap();
+                assert!(retrieved.is_some());
+                assert_eq!(retrieved.unwrap().layout_data, format!("data_{}", i));
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Clean up temporary database files
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

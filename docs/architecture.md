@@ -14,16 +14,22 @@ The connection to Klipper via the Unix Domain Socket (UDS) is treated as an isol
 - Telemetry updates (temperatures, position coordinates, printing status) are pushed out via a single-producer multi-consumer `watch` channel.
 
 ### SurrealDB Transactional Local Storage
-Database management utilizes SurrealDB configured with the pure-Rust file-backed `kv-surrealkv` local storage engine (and `kv-mem` for testing).
-- Maintains transaction-safe logs for print history and G-code file metadata.
-- Prevents database corruption from multiple instances using transactional lock file checks.
+Database management utilizes SurrealDB configured with the high-performance, transactional embedded `RocksDB` local storage engine (with `kv-mem` for testing).
+- Defines structural schemas for `PrintRecord` and `WebLayoutPreset` using Serde serializations.
+- Employs SurrealQL-based async CRUD functions for saving, retrieving, and deleting records.
+- Ensures concurrent transaction safety across threads and prevents database corruption using transactional lock file checks.
 
 ### Memory-Mapped Zero-Copy G-code Analyzer
-To prevent heavy files from blocking executor threads, the G-code parsing pipeline (`analyzer.rs`) uses memory-mapped file access (`memmap2::Mmap`).
-- Performs regex searches on the first and last 64KB chunks of files to extract metadata (estimated print times, layer height, slicer type) and base64 PNG thumbnails.
-- Extracted thumbnails are decoded and cached locally as `.png` files under `~/.config/rmr/thumbnails/`.
+To prevent heavy files from blocking executor threads, the G-code parsing pipeline (`analyzer.rs`) maps uploaded G-code files directly into virtual memory using `memmap2::Mmap`.
+- Executes an ultra-fast parallel backward search using the `rayon` crate, scanning chunks in parallel starting from the final byte.
+- Parses out estimated print time (supporting both seconds and HMS formats), layer heights, slicer type, and raw base64 thumbnail bytes.
+- Decodes and saves the extracted base64 preview image directly to `/opt/printer_data/thumbnails/` as a raw PNG, falling back to local user config paths if write permissions are restricted.
 
-### Integrated Slint Touchscreen GUI
+### Actix WebSocket Session Actors
+WebSocket connections from Fluidd are managed using Actix Web Actors (`actix-web-actors`), implementing `Actor` and `StreamHandler` for `FluiddSession`.
+- Session actors parse incoming JSON-RPC 2.0 messages from Fluidd and register subscribers.
+- They stream system status updates safely by serializing state frames into text frames and broadcasting them asynchronously to all active client actors via a Tokio broadcast subscription.
+
 The frontend runs as part of the same process, loading `MainWindow` from the `rmr-gui` crate.
 - Pushes Klipper state updates from the watch channel to Slint properties on the main thread via thread-safe `slint::invoke_from_event_loop` handlers.
 - Transmits user commands (Emergency Stop, G-code macros, temperature presets) back to the tokio runtime thread pool.
