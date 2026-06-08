@@ -96,6 +96,8 @@ pub async fn start_web_server(state: Arc<SystemState>) -> Result<(), std::io::Er
             .service(handlers::server_config)
             .service(handlers::temperature_store)
             .service(crate::files::upload_file)
+            .service(crate::files::list_files)
+            .service(crate::files::delete_file)
             .service(crate::files::delete_file)
             .service(crate::files::list_files)
             .route("/websocket", actix_web::web::get().to(ws::ws_handler))

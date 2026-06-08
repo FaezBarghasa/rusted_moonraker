@@ -134,6 +134,87 @@ pub async fn ws_router(
                 "id": id
             })
         }
+
+        "printer.objects.query" => {
+            let kstate = state.state_rx.borrow().clone();
+            let mut status = serde_json::Map::new();
+            status.insert("print_stats".to_string(), serde_json::json!({
+                "state": kstate.print_status.to_lowercase(),
+                "print_duration": 0.0,
+                "total_duration": 0.0,
+                "filament_used": 0.0,
+                "filename": ""
+            }));
+            status.insert("extruder".to_string(), serde_json::json!({
+                "temperature": kstate.tool_temp,
+                "target": kstate.target_temp,
+                "pressure_advance": 0.0,
+                "smooth_time": 0.0
+            }));
+            status.insert("toolhead".to_string(), serde_json::json!({
+                "position": [kstate.x, kstate.y, kstate.z, kstate.e],
+                "status": "Ready",
+                "homed_axes": "xyz",
+                "print_time": 0.0,
+                "estimated_print_time": 0.0,
+                "max_velocity": 300.0,
+                "max_accel": 3000.0,
+                "max_accel_to_decel": 1500.0,
+                "square_corner_velocity": 5.0
+            }));
+            status.insert("display_status".to_string(), serde_json::json!({
+                "progress": kstate.print_progress,
+                "message": ""
+            }));
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {
+                    "eventtime": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64(),
+                    "status": status
+                },
+                "id": id
+            })
+        }
+        "printer.objects.subscribe" => {
+            let kstate = state.state_rx.borrow().clone();
+            let mut status = serde_json::Map::new();
+            status.insert("print_stats".to_string(), serde_json::json!({
+                "state": kstate.print_status.to_lowercase(),
+                "print_duration": 0.0,
+                "total_duration": 0.0,
+                "filament_used": 0.0,
+                "filename": ""
+            }));
+            status.insert("extruder".to_string(), serde_json::json!({
+                "temperature": kstate.tool_temp,
+                "target": kstate.target_temp,
+                "pressure_advance": 0.0,
+                "smooth_time": 0.0
+            }));
+            status.insert("toolhead".to_string(), serde_json::json!({
+                "position": [kstate.x, kstate.y, kstate.z, kstate.e],
+                "status": "Ready",
+                "homed_axes": "xyz",
+                "print_time": 0.0,
+                "estimated_print_time": 0.0,
+                "max_velocity": 300.0,
+                "max_accel": 3000.0,
+                "max_accel_to_decel": 1500.0,
+                "square_corner_velocity": 5.0
+            }));
+            status.insert("display_status".to_string(), serde_json::json!({
+                "progress": kstate.print_progress,
+                "message": ""
+            }));
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {
+                    "eventtime": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64(),
+                    "status": status
+                },
+                "id": id
+            })
+        }
         "printer.emergency_stop" => {
             let _ = state.klippy_tx.send(crate::klippy::KlippyCommand::EmergencyStop).await;
             serde_json::json!({

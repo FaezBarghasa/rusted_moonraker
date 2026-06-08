@@ -8,6 +8,7 @@ pub mod migration;
 pub struct GCodeMetadata {
     pub estimated_time: Option<f64>,
     pub layer_height: Option<f64>,
+    pub layer_count: Option<u32>,
     pub slicer_type: Option<String>,
     pub thumbnail_path: Option<String>,
 }
@@ -76,7 +77,7 @@ impl DatabaseManager {
     pub async fn initialize(db_dir: &Path) -> Result<Self, DatabaseError> {
         check_and_clear_lockfile(db_dir)?;
         let path_str = db_dir.to_string_lossy().to_string();
-        let db = Surreal::new::<RocksDb>(&path_str).await?;
+        let db = Surreal::new::<RocksDb>("/opt/printer_data/database/surreal.db").await?;
         db.use_ns("moonraker").use_db("printer").await?;
         migration::run_migrations(&db).await?;
         Ok(DatabaseManager { inner: db })
@@ -125,12 +126,13 @@ impl DatabaseManager {
     pub async fn save_gcode_metadata(&self, file_path: &str, metadata: &GCodeMetadata) -> Result<(), DatabaseError> {
         self.inner
             .query("INSERT INTO gcode_files (file_path, estimated_time, layer_height, slicer_type, thumbnail_path)
-                    VALUES ($file_path, $estimated_time, $layer_height, $slicer_type, $thumbnail_path)
+                    VALUES ($file_path, $estimated_time, $layer_height, $layer_count, $slicer_type, $thumbnail_path)
                     ON DUPLICATE KEY UPDATE
-                    estimated_time = $estimated_time, layer_height = $layer_height, slicer_type = $slicer_type, thumbnail_path = $thumbnail_path;")
+                    estimated_time = $estimated_time, layer_height = $layer_height, layer_count = $layer_count, slicer_type = $slicer_type, thumbnail_path = $thumbnail_path;")
             .bind(("file_path", file_path.to_string()))
             .bind(("estimated_time", metadata.estimated_time))
             .bind(("layer_height", metadata.layer_height))
+            .bind(("layer_count", metadata.layer_count))
             .bind(("slicer_type", metadata.slicer_type.clone()))
             .bind(("thumbnail_path", metadata.thumbnail_path.clone()))
             .await?;
@@ -226,6 +228,7 @@ mod tests {
         let meta = GCodeMetadata {
             estimated_time: Some(1234.5),
             layer_height: Some(0.2),
+            layer_count: Some(100),
             slicer_type: Some("PrusaSlicer".to_string()),
             thumbnail_path: Some("thumb.png".to_string()),
         };
