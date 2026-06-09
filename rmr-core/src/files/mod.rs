@@ -4,29 +4,15 @@ pub mod manager;
 pub use analyzer::analyze_gcode;
 pub use manager::FileManager;
 
+// Use the new chunked upload from web/handlers
+pub use crate::web::handlers::upload_file;
+
 use actix_web::{get, post, delete, web, HttpResponse, Responder};
 use serde_json::json;
 use std::sync::Arc;
 use std::collections::HashMap;
 
 use crate::web::SystemState;
-
-#[post("/server/files/upload")]
-pub async fn upload_file(
-    state: web::Data<Arc<SystemState>>,
-    query: web::Query<HashMap<String, String>>,
-    bytes: web::Bytes,
-) -> impl Responder {
-    let filename = match query.get("filename") {
-        Some(f) => f,
-        None => return HttpResponse::BadRequest().body("Missing filename query parameter"),
-    };
-
-    match state.file_manager.process_upload(filename, &bytes).await {
-        Ok(_) => HttpResponse::Ok().json(json!({ "item": { "path": filename } })),
-        Err(e) => HttpResponse::InternalServerError().body(format!("Upload failed: {:?}", e)),
-    }
-}
 
 #[delete("/server/files/delete")]
 pub async fn delete_file(

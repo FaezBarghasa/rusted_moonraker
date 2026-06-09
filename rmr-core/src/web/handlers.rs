@@ -50,3 +50,81 @@ pub async fn temperature_store(state: web::Data<Arc<SystemState>>) -> impl Respo
         "timestamps": timestamps
     }))
 }
+
+
+use actix_multipart::Multipart;
+use futures_util::stream::StreamExt as _;
+use tokio::io::AsyncWriteExt;
+use std::collections::HashMap;
+
+#[actix_web::post("/server/files/upload")]
+pub async fn upload_file(
+    state: web::Data<Arc<SystemState>>,
+    mut payload: Multipart,
+) -> impl Responder {
+    let mut filename = String::new();
+    let mut root_dir = state.file_manager.root_dir.clone();
+
+    while let Some(item) = payload.next().await {
+        let mut field = match item {
+            Ok(f) => f,
+            Err(_) => return HttpResponse::BadRequest().body("Payload error"),
+        };
+
+        let content_disposition = field.content_disposition();
+        if let Some(name) = content_disposition.get_name() {
+            if name == "file" {
+                if let Some(fnm) = content_disposition.get_filename() {
+                    filename = fnm.to_string();
+                }
+
+                if filename.is_empty() {
+                    return HttpResponse::BadRequest().body("Missing filename");
+                }
+
+                let filepath = root_dir.join(&filename);
+                if let Some(parent) = filepath.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+
+                let file = match tokio::fs::File::create(&filepath).await {
+                    Ok(f) => f,
+                    Err(e) => return HttpResponse::InternalServerError().body(format!("Failed to create file: {}", e)),
+                };
+
+                let mut buf_writer = tokio::io::BufWriter::new(file);
+
+                let mut size = 0;
+                let max_size = state.file_manager.max_upload_size_mb * 1024 * 1024;
+
+                while let Some(chunk) = field.next().await {
+                    let data = match chunk {
+                        Ok(d) => d,
+                        Err(_) => return HttpResponse::BadRequest().body("Chunk error"),
+                    };
+                    size += data.len() as u64;
+                    if size > max_size {
+                        return HttpResponse::PayloadTooLarge().body("File too large");
+                    }
+                    if let Err(e) = buf_writer.write_all(&data).await {
+                        return HttpResponse::InternalServerError().body(format!("Failed to write file: {}", e));
+                    }
+                }
+
+                if let Err(e) = buf_writer.flush().await {
+                    return HttpResponse::InternalServerError().body(format!("Failed to flush file: {}", e));
+                }
+
+                if let Ok(meta) = crate::files::analyze_gcode(&filepath) {
+                    let _ = state.db.save_gcode_metadata(&filename, &meta).await;
+                }
+            }
+        }
+    }
+
+    if filename.is_empty() {
+        return HttpResponse::BadRequest().body("No file uploaded");
+    }
+
+    HttpResponse::Ok().json(json!({ "item": { "path": filename } }))
+}
