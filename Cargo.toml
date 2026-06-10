@@ -1,7 +1,6 @@
 [workspace]
-resolver = "2"
 members = [
     "rmr-core",
-    "rmr-gui",
-    "rmr-app",
+    "rmr-app"
 ]
+resolver = "2"

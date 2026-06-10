@@ -1,130 +1,70 @@
-use actix_web::{get, web, HttpResponse, Responder};
-use std::sync::Arc;
+use actix_web::{web, HttpResponse, Responder};
+use actix_multipart::Multipart;
+use std::path::Path;
 use serde_json::json;
 
-use crate::web::SystemState;
+use crate::files::manager::save_upload;
+use crate::files::analyzer::{analyze_gcode, GcodeMetadata};
+use crate::state_recovery::StateMachine;
+use crate::web::AppState;
 
-#[get("/printer/info")]
-pub async fn printer_info(state: web::Data<Arc<SystemState>>) -> impl Responder {
-    let klipper_state = state.state_rx.borrow().clone();
-    let status_str = klipper_state.print_status;
-    HttpResponse::Ok().json(json!({
-        "state": status_str.to_lowercase(),
-        "state_message": format!("Printer is in {} state", status_str),
-        "hostname": "RMR-daemon"
-    }))
+pub async fn get_history(data: web::Data<AppState>) -> impl Responder {
+    let mut response = match data.db.query("SELECT * FROM checkpoints").await {
+        Ok(res) => res,
+        Err(e) => return HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
+    };
+
+    let history: Vec<crate::state_recovery::PrintRecoveryCheckpoint> = match response.take(0) {
+        Ok(h) => h,
+        Err(e) => return HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
+    };
+
+    HttpResponse::Ok().json(history)
 }
 
-#[get("/server/config")]
-pub async fn server_config(state: web::Data<Arc<SystemState>>) -> impl Responder {
-    HttpResponse::Ok().json(json!({
-        "server": {
-            "host": state.config.server.host,
-            "port": state.config.server.port,
-            "ssl_enabled": state.config.server.ssl_enabled,
-            "max_upload_size_mb": state.config.server.max_upload_size_mb
-        },
-        "klippy": {
-            "uds_path": state.config.klippy.uds_path,
-            "api_timeout_secs": state.config.klippy.api_timeout_secs
+pub async fn upload_gcode(data: web::Data<AppState>, payload: Multipart) -> impl Responder {
+    let dest = Path::new("./uploads");
+    if !dest.exists() {
+        if let Err(e) = std::fs::create_dir_all(dest) {
+            return HttpResponse::InternalServerError().json(json!({"error": format!("Failed to create upload dir: {}", e)}));
         }
-    }))
-}
-
-#[get("/server/temperature_store")]
-pub async fn temperature_store(state: web::Data<Arc<SystemState>>) -> impl Responder {
-    let history = state.temp_history.lock().unwrap();
-    let mut tool_temps = Vec::new();
-    let mut target_temps = Vec::new();
-    let mut timestamps = Vec::new();
-
-    for pt in history.iter() {
-        tool_temps.push(pt.tool_temp);
-        target_temps.push(pt.target_temp);
-        timestamps.push(pt.time);
     }
 
-    HttpResponse::Ok().json(json!({
-        "tool_temp": tool_temps,
-        "target_temp": target_temps,
-        "timestamps": timestamps
-    }))
-}
-
-
-use actix_multipart::Multipart;
-use futures_util::stream::StreamExt as _;
-use tokio::io::AsyncWriteExt;
-use std::collections::HashMap;
-
-#[actix_web::post("/server/files/upload")]
-pub async fn upload_file(
-    state: web::Data<Arc<SystemState>>,
-    mut payload: Multipart,
-) -> impl Responder {
-    let mut filename = String::new();
-    let mut root_dir = state.file_manager.root_dir.clone();
-
-    while let Some(item) = payload.next().await {
-        let mut field = match item {
-            Ok(f) => f,
-            Err(_) => return HttpResponse::BadRequest().body("Payload error"),
-        };
-
-        let content_disposition = field.content_disposition();
-        if let Some(name) = content_disposition.get_name() {
-            if name == "file" {
-                if let Some(fnm) = content_disposition.get_filename() {
-                    filename = fnm.to_string();
-                }
-
-                if filename.is_empty() {
-                    return HttpResponse::BadRequest().body("Missing filename");
-                }
-
-                let filepath = root_dir.join(&filename);
-                if let Some(parent) = filepath.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-
-                let file = match tokio::fs::File::create(&filepath).await {
-                    Ok(f) => f,
-                    Err(e) => return HttpResponse::InternalServerError().body(format!("Failed to create file: {}", e)),
-                };
-
-                let mut buf_writer = tokio::io::BufWriter::new(file);
-
-                let mut size = 0;
-                let max_size = state.file_manager.max_upload_size_mb * 1024 * 1024;
-
-                while let Some(chunk) = field.next().await {
-                    let data = match chunk {
-                        Ok(d) => d,
-                        Err(_) => return HttpResponse::BadRequest().body("Chunk error"),
-                    };
-                    size += data.len() as u64;
-                    if size > max_size {
-                        return HttpResponse::PayloadTooLarge().body("File too large");
+    match save_upload(payload, dest).await {
+        Ok(filename) => {
+            let filepath = dest.join(&filename).to_string_lossy().into_owned();
+            let db = data.db.clone();
+            let fname_clone = filename.clone();
+            
+            match tokio::task::spawn_blocking(move || analyze_gcode(&filepath)).await {
+                Ok(Ok(metadata)) => {
+                    let insert_res: Result<Option<GcodeMetadata>, _> = db.create(("metadata", &fname_clone)).content(&metadata).await;
+                    match insert_res {
+                        Ok(_) => HttpResponse::Ok().json(json!({
+                            "message": "Upload and analysis complete",
+                            "filename": filename,
+                            "metadata": metadata
+                        })),
+                        Err(e) => HttpResponse::InternalServerError().json(json!({"error": format!("Database insert failed: {}", e)})),
                     }
-                    if let Err(e) = buf_writer.write_all(&data).await {
-                        return HttpResponse::InternalServerError().body(format!("Failed to write file: {}", e));
-                    }
-                }
-
-                if let Err(e) = buf_writer.flush().await {
-                    return HttpResponse::InternalServerError().body(format!("Failed to flush file: {}", e));
-                }
-
-                if let Ok(meta) = crate::files::analyze_gcode(&filepath) {
-                    let _ = state.db.save_gcode_metadata(&filename, &meta).await;
-                }
+                },
+                Ok(Err(e)) => HttpResponse::InternalServerError().json(json!({"error": format!("Analysis failed: {}", e)})),
+                Err(e) => HttpResponse::InternalServerError().json(json!({"error": format!("Task failed: {}", e)})),
             }
-        }
+        },
+        Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
+}
 
-    if filename.is_empty() {
-        return HttpResponse::BadRequest().body("No file uploaded");
+pub async fn trigger_recovery(data: web::Data<AppState>, query: web::Query<std::collections::HashMap<String, String>>) -> impl Responder {
+    let job_id = match query.get("job_id") {
+        Some(id) => id,
+        None => return HttpResponse::BadRequest().json(json!({"error": "Missing job_id"})),
+    };
+
+    let state_machine = StateMachine::new(data.db.clone());
+    match state_machine.resume_print_job(job_id).await {
+        Ok(checkpoint) => HttpResponse::Ok().json(json!({"message": "Recovery successful", "checkpoint": checkpoint})),
+        Err(e) => HttpResponse::InternalServerError().json(json!({"error": format!("Recovery failed: {:?}", e)})),
     }
-
-    HttpResponse::Ok().json(json!({ "item": { "path": filename } }))
 }
