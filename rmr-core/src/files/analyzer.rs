@@ -177,8 +177,8 @@ mod tests {
         let meta = analyze_gcode(&file_path).unwrap();
         
         assert_eq!(meta.slicer_type, Some("PrusaSlicer 2.7.1".to_string()));
-        assert_eq!(meta.layer_height,
-        layer_count, Some(0.15));
+        assert_eq!(meta.layer_height, Some(0.15));
+        assert_eq!(meta.layer_count, Some(100));
         assert_eq!(meta.estimated_time, Some(3600.0 + 45.0 * 60.0 + 30.0));
         assert!(meta.thumbnail_path.is_some());
         
